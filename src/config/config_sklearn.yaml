@@ -1,0 +1,27 @@
+# config/config_sklearn.yaml
+
+data:
+  raw_source: "sklearn_iris"
+  new_data_dir: "../data/new"
+  processed_dir: "../data/processed"
+
+training:
+  test_size: 0.2
+  random_seed: 42
+
+  model_type: "random_forest"
+  n_estimators: 100
+  max_depth: 10
+  min_samples_split: 2
+  criterion: "gini"
+  bootstrap: True
+
+evaluation:
+  # no extra parameters
+
+tuning:
+  param_grid:
+    n_estimators: [50, 100, 200]
+    max_depth: [None, 5, 10]
+    min_samples_split: [2, 5]
+    criterion: ["gini", "entropy"]
