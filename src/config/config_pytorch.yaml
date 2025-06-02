@@ -4,6 +4,8 @@ data:
   raw_source: "sklearn_iris"
   new_data_dir: "../data/new"
   processed_dir: "../data/processed"
+  features: ["temperature", "pressure", "dens", "tg", "mw", "mn", "cryst"]
+  target_col: "wa"
 
 training:
   test_size: 0.2
