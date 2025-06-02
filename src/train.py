@@ -1,26 +1,22 @@
 # src/train.py
 
 import os
-import numpy as np
 import joblib
 import mlflow
-from sklearn.ensemble import RandomForestClassifier
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 import xgboost as xgb
 
-from src.data.load_data import load_raw_data, save_processed_data
+from src.data.load_data import load_raw_data
 from src.data.preprocess import preprocess_data
-from src.models.pytorch_model import IrisNet
 from src.models.xgb_model import build_xgb_model
 from src.models.torch_wrapper import IrisTorchClassifier
-from src.utils import load_config, get_device
+from src.utils import load_config
 
 
 def train():
-    # 1. Determine which config to load based on environment variable or default
-    #    (Here we simply pick one; in practice you might pass an argument)
-    model_choice = os.environ.get("MODEL_CHOICE", "pytorch")  # options: "sklearn", "pytorch", "xgboost"
-
+    # 1. Determine which config to load based on MODEL_CHOICE
+    model_choice = os.environ.get("MODEL_CHOICE", "pytorch")  # "sklearn", "xgboost", or "pytorch"
     if model_choice == "sklearn":
         config_path = os.path.join(os.path.dirname(__file__), "../config/config_sklearn.yaml")
     elif model_choice == "xgboost":
@@ -30,28 +26,28 @@ def train():
 
     config = load_config(config_path)
 
-    # 2. Load raw data (Iris + any new CSVs)
-    df_full = load_raw_data(config)
+    # 2. Load & merge all CSVs into a single DataFrame
+    full_df = load_raw_data(config)
 
-    # 3. Preprocess data
-    X_train, X_test, y_train, y_test, scaler = preprocess_data(df_full, config)
+    # 3. Preprocess: split into train/val/test, apply ColumnTransformer, save processed arrays & preprocessor
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = preprocess_data(full_df, config)
 
-    # 4. Save processed data
-    save_processed_data(X_train, y_train, X_test, y_test, config)
-
-    # 5. Set up MLflow experiment
-    mlflow_experiment = config["training"].get("mlflow_experiment", f"iris_{model_choice}_experiment")
+    # 4. Set up MLflow experiment
+    mlflow_experiment = config["training"].get(
+        "mlflow_experiment", f"iris_{model_choice}_experiment"
+    )
     mlflow.set_experiment(mlflow_experiment)
 
     with mlflow.start_run():
-        # Log data split info
+        # Log basic info
         mlflow.log_param("model_type", model_choice)
         mlflow.log_param("train_size", len(X_train))
+        mlflow.log_param("val_size", len(X_val))
         mlflow.log_param("test_size", len(X_test))
         mlflow.log_param("random_seed", config["training"]["random_seed"])
 
+        # 5a. Train & evaluate RandomForest
         if model_choice == "sklearn":
-            # 6a. Train a RandomForestClassifier
             n_estimators = config["training"]["n_estimators"]
             max_depth = config["training"]["max_depth"]
             min_samples_split = config["training"]["min_samples_split"]
@@ -74,19 +70,25 @@ def train():
             )
             model.fit(X_train, y_train)
 
+            # Validation accuracy
+            val_acc = model.score(X_val, y_val)
+            mlflow.log_metric("val_accuracy", val_acc)
+            print(f"[RandomForest] Validation Accuracy: {val_acc:.4f}")
+
+            # Test accuracy
             test_acc = model.score(X_test, y_test)
             mlflow.log_metric("test_accuracy", test_acc)
             print(f"[RandomForest] Test Accuracy: {test_acc:.4f}")
 
-            # 7a. Save model
+            # Save model
             artifacts_dir = os.path.join(os.path.dirname(__file__), "../artifacts")
             os.makedirs(artifacts_dir, exist_ok=True)
             model_path = os.path.join(artifacts_dir, "rf_model.joblib")
             joblib.dump(model, model_path)
             mlflow.log_artifact(model_path, artifact_path="model")
 
+        # 5b. Train & evaluate XGBoost
         elif model_choice == "xgboost":
-            # 6b. Train an XGBoost classifier
             xgb_params = {
                 "objective": config["training"]["objective"],
                 "num_class": config["training"]["num_class"],
@@ -102,21 +104,27 @@ def train():
 
             mlflow.log_params(xgb_params)
             model = build_xgb_model(xgb_params)
-            model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+            model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
+            # Validation accuracy
+            val_acc = model.score(X_val, y_val)
+            mlflow.log_metric("val_accuracy", val_acc)
+            print(f"[XGBoost] Validation Accuracy: {val_acc:.4f}")
+
+            # Test accuracy
             test_acc = model.score(X_test, y_test)
             mlflow.log_metric("test_accuracy", test_acc)
             print(f"[XGBoost] Test Accuracy: {test_acc:.4f}")
 
-            # 7b. Save model
+            # Save model
             artifacts_dir = os.path.join(os.path.dirname(__file__), "../artifacts")
             os.makedirs(artifacts_dir, exist_ok=True)
             model_path = os.path.join(artifacts_dir, "xgb_model.joblib")
             joblib.dump(model, model_path)
             mlflow.log_artifact(model_path, artifact_path="model")
 
+        # 5c. Train & evaluate PyTorch via sklearn wrapper
         else:
-            # 6c. Train a PyTorch neural network via the wrapper
             batch_size = config["training"]["batch_size"]
             num_epochs = config["training"]["num_epochs"]
             learning_rate = config["training"]["learning_rate"]
@@ -128,7 +136,6 @@ def train():
             mlflow.log_param("learning_rate", learning_rate)
             mlflow.log_param("hidden_dim", hidden_dim)
 
-            # Wrap and train
             model = IrisTorchClassifier(
                 hidden_dim=hidden_dim,
                 learning_rate=learning_rate,
@@ -138,22 +145,30 @@ def train():
             )
             model.fit(X_train, y_train)
 
+            # Validation accuracy
+            val_acc = model.score(X_val, y_val)
+            mlflow.log_metric("val_accuracy", val_acc)
+            print(f"[PyTorch] Validation Accuracy: {val_acc:.4f}")
+
+            # Test accuracy
             test_acc = model.score(X_test, y_test)
             mlflow.log_metric("test_accuracy", test_acc)
             print(f"[PyTorch] Test Accuracy: {test_acc:.4f}")
 
-            # 7c. Save model
+            # Save model
             artifacts_dir = os.path.join(os.path.dirname(__file__), "../artifacts")
             os.makedirs(artifacts_dir, exist_ok=True)
             model_path = os.path.join(artifacts_dir, "torch_model.joblib")
             joblib.dump(model, model_path)
             mlflow.log_artifact(model_path, artifact_path="model")
 
-        # 8. Save and log the fitted scaler
-        artifacts_dir = os.path.join(os.path.dirname(__file__), "../artifacts")
-        scaler_path = os.path.join(artifacts_dir, "scaler.pkl")
-        joblib.dump(scaler, scaler_path)
-        mlflow.log_artifact(scaler_path, artifact_path="model")
+        # 6. (Optional) Re-save preprocessor for serving, if you want a consistent path
+        #    preprocess_data already saved preprocessor under data/processed/preprocessor.joblib,
+        #    so you can skip this step unless you want a copy under artifacts.
+        #
+        # preprocessor_path = os.path.join(artifacts_dir, "preprocessor.joblib")
+        # joblib.dump(preprocessor, preprocessor_path)
+        # mlflow.log_artifact(preprocessor_path, artifact_path="model")
 
 
 if __name__ == "__main__":
