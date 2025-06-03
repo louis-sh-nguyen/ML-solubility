@@ -4,47 +4,77 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.metrics import r2_score
 
 
-class IrisTorchClassifier(BaseEstimator, ClassifierMixin):
+class TorchRegressor(BaseEstimator, RegressorMixin):
     """
-    Sklearn-compatible wrapper for a simple PyTorch neural network on the Iris dataset.
+    Sklearn‐compatible wrapper around a simple PyTorch feedforward regressor.
+    Accepts any input dimension; outputs a single continuous value.
     """
 
     def __init__(self,
-                 hidden_dim=16,
-                 learning_rate=0.001,
-                 num_epochs=20,
-                 batch_size=16,
-                 random_seed=42):
+                 input_dim: int,
+                 hidden_dim: int = 16,
+                 learning_rate: float = 0.001,
+                 num_epochs: int = 20,
+                 batch_size: int = 16,
+                 random_seed: int = 42):
+        """
+        Parameters:
+        -----------
+        input_dim : int
+            Number of input features.
+        hidden_dim : int
+            Size of the hidden layer.
+        learning_rate : float
+        num_epochs : int
+        batch_size : int
+        random_seed : int
+        """
+        self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.random_seed = random_seed
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._build_model()
 
     def _build_model(self):
+        """
+        Construct a simple feedforward network:
+            input_dim → hidden_dim → ReLU → output_dim=1
+        """
         torch.manual_seed(self.random_seed)
-        # Assume 4 input features (Iris) and 3 output classes
         self.model = nn.Sequential(
-            nn.Linear(4, self.hidden_dim),
+            nn.Linear(self.input_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.hidden_dim, 3)
+            nn.Linear(self.hidden_dim, 1)
         ).to(self.device)
-        self.criterion = nn.CrossEntropyLoss()
+
+        self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
     def fit(self, X, y):
         """
-        X: numpy array of shape (n_samples, 4)
-        y: numpy array of shape (n_samples,)
+        Train the PyTorch model.
+
+        X : numpy array or sparse matrix of shape (n_samples, input_dim)
+        y : numpy array of shape (n_samples,)
         """
-        self._build_model()  # Rebuild to reset weights each fit call
+        # Rebuild model to reset weights on each fit
+        self._build_model()
+
+        # Convert sparse matrix to dense numpy array if necessary
+        if hasattr(X, "toarray"):
+            X = X.toarray()
+
         X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
-        y_tensor = torch.tensor(y, dtype=torch.long).to(self.device)
+        y_tensor = torch.tensor(y.reshape(-1, 1), dtype=torch.float32).to(self.device)
+
         dataset = TensorDataset(X_tensor, y_tensor)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
@@ -52,23 +82,36 @@ class IrisTorchClassifier(BaseEstimator, ClassifierMixin):
         for _ in range(self.num_epochs):
             for xb, yb in loader:
                 self.optimizer.zero_grad()
-                logits = self.model(xb)
-                loss = self.criterion(logits, yb)
+                preds = self.model(xb)
+                loss = self.criterion(preds, yb)
                 loss.backward()
                 self.optimizer.step()
+
         return self
 
     def predict(self, X):
+        """
+        Generate predictions for X.
+
+        X : numpy array or sparse matrix of shape (n_samples, input_dim)
+        Returns: numpy array of shape (n_samples,)
+        """
+        # Convert sparse matrix to dense numpy array if necessary
+        if hasattr(X, "toarray"):
+            X = X.toarray()
+            
         X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
         self.model.eval()
         with torch.no_grad():
-            logits = self.model(X_tensor)
-            preds = torch.argmax(logits, dim=1)
-        return preds.cpu().numpy()
+            preds = self.model(X_tensor).cpu().numpy().reshape(-1)
+        return preds
 
     def score(self, X, y):
         """
-        Returns accuracy on (X, y).
+        Returns R² score to be compatible with sklearn.
+
+        X : numpy array of shape (n_samples, input_dim)
+        y : numpy array of shape (n_samples,)
         """
         preds = self.predict(X)
-        return (preds == y).mean()
+        return r2_score(y, preds)

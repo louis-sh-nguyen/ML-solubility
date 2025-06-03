@@ -1,0 +1,34 @@
+# config/config_xgboost.yaml
+
+data:
+  raw_source: "sklearn_iris"
+  new_data_dir: "../data/new"
+  processed_dir: "../data/processed"
+  features: ["temperature", "pressure", "dens", "tg", "mw", "mn", "cryst"]
+  target_col: "wa"
+
+training:
+  test_size: 0.2
+  random_seed: 42
+
+  model_type: "xgboost"
+  objective: "multi:softprob"
+  num_class: 3
+  learning_rate: 0.1
+  max_depth: 4
+  n_estimators: 100
+  subsample: 0.8
+  colsample_bytree: 0.8
+  eval_metric: "mlogloss"
+  use_label_encoder: False
+
+evaluation:
+  # no extra parameters
+
+tuning:
+  param_grid:
+    learning_rate: [0.01, 0.1, 0.2]
+    max_depth: [3, 4, 6]
+    n_estimators: [50, 100, 200]
+    subsample: [0.6, 0.8, 1.0]
+    colsample_bytree: [0.6, 0.8, 1.0]

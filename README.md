@@ -114,4 +114,45 @@ Data Source: [Predicting the solubility of gases, vapors, and supercritical flui
 ```
 
 ## Usage
-<!-- TO BE ADDED -->
+
+### Installation as Development Package
+
+The recommended way to use this code is to install it as a development package:
+
+1. From the project root directory, install the package in editable mode:
+   ```bash
+   pip install -e .
+   ```
+
+2. This creates an `.egg-info` directory that helps Python find your package. You don't need to reinstall the package when making code changes - they will be reflected immediately.
+
+3. Now you can import modules from anywhere:
+   ```python
+   from src.data.load_data import load_raw_data
+   from src.models.torch_wrapper import TorchRegressor
+   ```
+
+### Running the Models
+
+You can train models using the following command:
+
+```bash
+# Run from the project root directory
+python -m src.train
+```
+
+Specify which model to use by setting the `MODEL_CHOICE` environment variable:
+
+```bash
+# Windows
+set MODEL_CHOICE=sklearn
+python -m src.train
+
+# Mac/Linux
+MODEL_CHOICE=sklearn python -m src.train
+```
+
+Available model choices:
+- `sklearn` (RandomForest)
+- `xgboost` (XGBoost)
+- `pytorch` (PyTorch neural network, default)
