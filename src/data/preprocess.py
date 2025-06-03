@@ -75,7 +75,7 @@ def preprocess_data(full_df, config: dict):
     y_test  = y_test.values
     
     # h) Save processed arrays under data/processed/
-    processed_dir = Path(__file__).parent.parent / 'data' / 'processed'
+    processed_dir = Path(__file__).parent.parent.parent / 'data' / 'processed'
     processed_dir.mkdir(parents=True, exist_ok=True)
     
     np.save(processed_dir / 'X_train.npy', X_train)

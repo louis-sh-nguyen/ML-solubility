@@ -1,74 +1,62 @@
 # src/evaluate.py
 
 import os
-import numpy as np
 import joblib
-import torch
-from sklearn.metrics import accuracy_score, classification_report
+import numpy as np
+from pathlib import Path
+from sklearn.metrics import mean_squared_error, r2_score
+
 from src.utils import load_config
 
 
 def evaluate():
-    # 1. Determine which config to load based on environment variable
+    # 1. Determine which config to load based on MODEL_CHOICE
     model_choice = os.environ.get("MODEL_CHOICE", "pytorch")  # "sklearn", "xgboost", or "pytorch"
+    base_dir = Path(__file__).parent
 
     if model_choice == "sklearn":
-        config_path = os.path.join(os.path.dirname(__file__), "../config/config_sklearn.yaml")
+        config_path = base_dir.parent / "config" / "config_sklearn.yaml"
     elif model_choice == "xgboost":
-        config_path = os.path.join(os.path.dirname(__file__), "../config/config_xgboost.yaml")
+        config_path = base_dir.parent / "config" / "config_xgboost.yaml"
     else:
-        config_path = os.path.join(os.path.dirname(__file__), "../config/config_pytorch.yaml")
+        config_path = base_dir.parent / "config" / "config_pytorch.yaml"
 
-    config = load_config(config_path)
+    config = load_config(str(config_path))
 
-    # 2. Load processed data
-    processed_dir = os.path.join(os.path.dirname(__file__), "../data/processed")
-    X_test = np.load(os.path.join(processed_dir, "test.npy"))
-    y_test = np.load(os.path.join(processed_dir, "test_labels.npy"))
+    # 2. Load processed test data
+    processed_dir = base_dir.parent / "data" / "processed"
+    X_test_path = processed_dir / "X_test.npy"
+    y_test_path = processed_dir / "y_test.npy"
 
-    # 3. Load model and scaler artefacts
-    artifacts_dir = os.path.join(os.path.dirname(__file__), "../artifacts")
-    scaler_path = os.path.join(artifacts_dir, "scaler.pkl")
-    scaler = joblib.load(scaler_path)
+    if not X_test_path.exists() or not y_test_path.exists():
+        raise FileNotFoundError("Processed test data not found. Run train.py first.")
 
-    # 4. Prepare test features
-    X_test_scaled = scaler.transform(X_test)
+    X_test = np.load(str(X_test_path))
+    y_test = np.load(str(y_test_path))
 
+    # 3. Load the trained model
+    artifacts_dir = base_dir.parent / "artifacts"
     if model_choice == "sklearn":
-        # 5a. Load RandomForest model
-        model_path = os.path.join(artifacts_dir, "rf_model.joblib")
-        model = joblib.load(model_path)
-
-        # 6a. Predict and evaluate
-        preds = model.predict(X_test_scaled)
-        acc = accuracy_score(y_test, preds)
-        print(f"[RandomForest] Test Accuracy: {acc:.4f}")
-        print("Classification Report:")
-        print(classification_report(y_test, preds))
-
+        model_path = artifacts_dir / "rf_regressor.joblib"
     elif model_choice == "xgboost":
-        # 5b. Load XGBoost model
-        model_path = os.path.join(artifacts_dir, "xgb_model.joblib")
-        model = joblib.load(model_path)
-
-        # 6b. Predict and evaluate
-        preds = model.predict(X_test_scaled)
-        acc = accuracy_score(y_test, preds)
-        print(f"[XGBoost] Test Accuracy: {acc:.4f}")
-        print("Classification Report:")
-        print(classification_report(y_test, preds))
-
+        model_path = artifacts_dir / "xgb_regressor.joblib"
     else:
-        # 5c. Load PyTorch wrapper model
-        model_path = os.path.join(artifacts_dir, "torch_model.joblib")
-        model = joblib.load(model_path)
+        model_path = artifacts_dir / "torch_regressor.joblib"
 
-        # 6c. Predict and evaluate
-        preds = model.predict(X_test_scaled)
-        acc = accuracy_score(y_test, preds)
-        print(f"[PyTorch] Test Accuracy: {acc:.4f}")
-        print("Classification Report:")
-        print(classification_report(y_test, preds))
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file not found at {model_path}. Run train.py first.")
+
+    model = joblib.load(str(model_path))
+
+    # 4. Make predictions and compute metrics
+    preds = model.predict(X_test)
+    mse = mean_squared_error(y_test, preds)
+    r2  = r2_score(y_test, preds)
+
+    # 5. Print results
+    print(f"[{model_choice.upper()}] Test set results:")
+    print(f"  • MSE: {mse:.4f}")
+    print(f"  • R² : {r2:.4f}")
 
 
 if __name__ == "__main__":
