@@ -6,3 +6,4 @@ dist/
 build/
 *.py[cod]
 *$py.class
+mlruns/
