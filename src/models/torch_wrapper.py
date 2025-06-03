@@ -6,12 +6,14 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.metrics import r2_score
+import numpy as np
+import scipy.sparse as sp
 
 
 class TorchRegressor(BaseEstimator, RegressorMixin):
     """
     Sklearn‐compatible wrapper around a simple PyTorch feedforward regressor.
-    Accepts any input dimension; outputs a single continuous value.
+    Accepts sparse or dense input; outputs a single continuous value.
     """
 
     def __init__(self,
@@ -58,19 +60,49 @@ class TorchRegressor(BaseEstimator, RegressorMixin):
         self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
+    def _ensure_dense(self, X):
+        """
+        Convert sparse or object-dtype arrays to a dense numpy array.
+        """
+        # If it's a scipy sparse matrix, convert to dense
+        if sp.issparse(X):
+            return X.toarray()
+
+        # If it's an object-dtype numpy array (e.g. loaded .npy wrapping a sparse), extract and convert
+        if isinstance(X, np.ndarray) and X.dtype == object:
+            # assume the array contains one sparse matrix or list of rows
+            element = X.item() if X.ndim == 0 else None
+            if sp.issparse(element):
+                return element.toarray()
+            try:
+                # If each row is a sparse vector
+                dense_rows = []
+                for row in X:
+                    if sp.issparse(row):
+                        dense_rows.append(row.toarray().ravel())
+                    else:
+                        dense_rows.append(np.asarray(row))
+                return np.vstack(dense_rows)
+            except Exception:
+                pass
+
+        # Otherwise assume it's already a dense numpy array
+        return np.asarray(X)
+
     def fit(self, X, y):
         """
         Train the PyTorch model.
 
-        X : numpy array or sparse matrix of shape (n_samples, input_dim)
-        y : numpy array of shape (n_samples,)
+        X : array-like of shape (n_samples, input_dim)
+            May be dense numpy array, scipy sparse matrix, or object-dtype array containing a sparse.
+        y : array-like of shape (n_samples,)
         """
+        # Convert to dense numpy if needed
+        X = self._ensure_dense(X)
+        y = np.asarray(y)
+
         # Rebuild model to reset weights on each fit
         self._build_model()
-
-        # Convert sparse matrix to dense numpy array if necessary
-        if hasattr(X, "toarray"):
-            X = X.toarray()
 
         X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
         y_tensor = torch.tensor(y.reshape(-1, 1), dtype=torch.float32).to(self.device)
@@ -93,13 +125,13 @@ class TorchRegressor(BaseEstimator, RegressorMixin):
         """
         Generate predictions for X.
 
-        X : numpy array or sparse matrix of shape (n_samples, input_dim)
+        X : array-like of shape (n_samples, input_dim)
+            May be dense numpy array, scipy sparse matrix, or object-dtype array containing a sparse.
         Returns: numpy array of shape (n_samples,)
         """
-        # Convert sparse matrix to dense numpy array if necessary
-        if hasattr(X, "toarray"):
-            X = X.toarray()
-            
+        # Convert to dense numpy if needed
+        X = self._ensure_dense(X)
+
         X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
         self.model.eval()
         with torch.no_grad():
@@ -110,8 +142,8 @@ class TorchRegressor(BaseEstimator, RegressorMixin):
         """
         Returns R² score to be compatible with sklearn.
 
-        X : numpy array of shape (n_samples, input_dim)
-        y : numpy array of shape (n_samples,)
+        X : array-like of shape (n_samples, input_dim)
+        y : array-like of shape (n_samples,)
         """
         preds = self.predict(X)
         return r2_score(y, preds)

@@ -31,8 +31,8 @@ def evaluate():
     if not X_test_path.exists() or not y_test_path.exists():
         raise FileNotFoundError("Processed test data not found. Run train.py first.")
 
-    X_test = np.load(str(X_test_path))
-    y_test = np.load(str(y_test_path))
+    X_test = np.load(str(X_test_path), allow_pickle=True)
+    y_test = np.load(str(y_test_path), allow_pickle=True)
 
     # 3. Load the trained model
     artifacts_dir = base_dir.parent / "artifacts"
