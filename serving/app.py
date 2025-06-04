@@ -66,8 +66,12 @@ def predict(features: IrisFeatures):
     # 5. Predict
     try:
         pred_label = int(model.predict(X_scaled)[0])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during prediction: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid input for prediction: {e}")
+    except TypeError as e:
+        raise HTTPException(status_code=400, detail=f"Type error during prediction: {e}")
+    except joblib.exceptions.JoblibException as e:
+        raise HTTPException(status_code=500, detail=f"Model-related error during prediction: {e}")
 
     return {"predicted_class": pred_label}
 
