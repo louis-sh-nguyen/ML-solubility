@@ -60,7 +60,7 @@ def predict(features: IrisFeatures):
     # 4. Scale features
     try:
         X_scaled = scaler.transform(X)
-    except Exception as e:
+    except (ValueError, TypeError) as e:
         raise HTTPException(status_code=500, detail=f"Error scaling input: {e}")
 
     # 5. Predict
