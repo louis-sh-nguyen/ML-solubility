@@ -1,1 +1,9 @@
 **/__pycache__/
+# Python package build artifacts
+*.egg-info/
+*.egg
+dist/
+build/
+*.py[cod]
+*$py.class
+mlruns/

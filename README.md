@@ -60,6 +60,99 @@ Data Source: [Predicting the solubility of gases, vapors, and supercritical flui
     conda env create -f environment.yml
     conda activate ml-solubility
     ```
+## Project tree
+```
+├── config/
+│   ├── config_sklearn.yaml
+│   ├── config_pytorch.yaml
+│   └── config_xgboost.yaml
+│
+├── data/
+│   ├── raw/
+│   ├── new/
+│   └── processed/
+│       ├── train.npy
+│       ├── train_labels.npy
+│       ├── test.npy
+│       └── test_labels.npy
+│
+├── src/
+│   ├── __init__.py
+│   │
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── load_data.py
+│   │   └── preprocess.py
+│   │
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── pytorch_model.py         # or iris_net.py (for PyTorch)
+│   │   ├── xgb_model.py             # if using XGBoost
+│   │   └── torch_wrapper.py         # sklearn‐compatible PyTorch wrapper
+│   │
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── tune.py
+│   └── utils.py
+│
+├── pipelines/
+│   └── training_pipeline.py
+│
+├── serving/
+│   ├── app.py
+│   └── schema.py
+│
+├── scripts/
+│   └── run_training.sh
+│
+├── artifacts/                       # saved model & scaler files
+│   ├── iris_model.pt
+│   └── scaler.pkl
+│
+├── requirements.txt
+└── README.md
+```
 
 ## Usage
-<!-- TO BE ADDED -->
+
+### Installation as Development Package
+
+The recommended way to use this code is to install it as a development package:
+
+1. From the project root directory, install the package in editable mode:
+   ```bash
+   pip install -e .
+   ```
+
+2. This creates an `.egg-info` directory that helps Python find your package. You don't need to reinstall the package when making code changes - they will be reflected immediately.
+
+3. Now you can import modules from anywhere:
+   ```python
+   from src.data.load_data import load_raw_data
+   from src.models.torch_wrapper import TorchRegressor
+   ```
+
+### Running the Models
+
+You can train models using the following command:
+
+```bash
+# Run from the project root directory
+python -m src.train
+```
+
+Specify which model to use by setting the `MODEL_CHOICE` environment variable:
+
+```bash
+# Windows
+set MODEL_CHOICE=sklearn
+python -m src.train
+
+# Mac/Linux
+MODEL_CHOICE=sklearn python -m src.train
+```
+
+Available model choices:
+- `sklearn` (RandomForest)
+- `xgboost` (XGBoost)
+- `pytorch` (PyTorch neural network, default)
