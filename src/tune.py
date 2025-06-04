@@ -16,6 +16,44 @@ from src.models.torch_wrapper import TorchRegressor
 from src.utils import load_config
 
 
+# ─── Top-level wrappers so they can be pickled ─────────────────────────────────
+
+class XGBWrapper(xgb.XGBRegressor):
+    """
+    XGBoost regressor with fixed objective and random_seed.
+    Hyperparameters (learning_rate, max_depth, n_estimators, subsample, colsample_bytree)
+    will be supplied by GridSearchCV.
+    """
+    def __init__(self, learning_rate, max_depth, n_estimators, subsample, colsample_bytree, random_seed):
+        super().__init__(
+            objective="reg:squarederror",
+            learning_rate=learning_rate,
+            max_depth=max_depth,
+            n_estimators=n_estimators,
+            subsample=subsample,
+            colsample_bytree=colsample_bytree,
+            random_state=random_seed,
+        )
+
+
+class WrappedTorchRegressor(TorchRegressor):
+    """
+    TorchRegressor with fixed input_dim and random_seed.
+    Other hyperparameters (hidden_dim, learning_rate, num_epochs, batch_size) come from GridSearchCV.
+    """
+    def __init__(self, input_dim, random_seed, hidden_dim, learning_rate, num_epochs, batch_size):
+        super().__init__(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            learning_rate=learning_rate,
+            num_epochs=num_epochs,
+            batch_size=batch_size,
+            random_seed=random_seed,
+        )
+
+
+# ─── Main tuning function ──────────────────────────────────────────────────────
+
 def tune():
     # 1. Determine which config to load based on MODEL_CHOICE
     model_choice = os.environ.get("MODEL_CHOICE", "pytorch")  # "sklearn", "xgboost", or "pytorch"
@@ -57,28 +95,20 @@ def tune():
 
     elif model_choice == "xgboost":
         # 3b. XGBRegressor GridSearchCV
-        # We create a custom wrapper to fix objective and random_seed
-        class XGBWrapper(xgb.XGBRegressor):
-            def __init__(self, learning_rate, max_depth, n_estimators, subsample, colsample_bytree):
-                super().__init__(
-                    objective="reg:squarederror",
-                    learning_rate=learning_rate,
-                    max_depth=max_depth,
-                    n_estimators=n_estimators,
-                    subsample=subsample,
-                    colsample_bytree=colsample_bytree,
-                    random_state=config["training"]["random_seed"],
-                )
-
         param_grid = config["tuning"]["param_grid"]
+        # Instantiate with placeholder hyperparameters; GridSearchCV will override them
+        placeholder = {k: param_grid[k][0] for k in param_grid}
+        estimator = XGBWrapper(
+            learning_rate=placeholder["learning_rate"],
+            max_depth=placeholder["max_depth"],
+            n_estimators=placeholder["n_estimators"],
+            subsample=placeholder["subsample"],
+            colsample_bytree=placeholder["colsample_bytree"],
+            random_seed=config["training"]["random_seed"]
+        )
+
         gs = GridSearchCV(
-            estimator=XGBWrapper(
-                learning_rate=config["training"]["learning_rate"],
-                max_depth=config["training"]["max_depth"],
-                n_estimators=config["training"]["n_estimators"],
-                subsample=config["training"]["subsample"],
-                colsample_bytree=config["training"]["colsample_bytree"],
-            ),
+            estimator=estimator,
             param_grid=param_grid,
             scoring="r2",
             cv=3,
@@ -93,22 +123,9 @@ def tune():
         print("Best CV R² (XGB):", gs.best_score_)
 
     else:
-        # 3c. PyTorch regressor via TorchRegressor + GridSearchCV
+        # 3c. PyTorch regressor via WrappedTorchRegressor + GridSearchCV
         input_dim = X_train.shape[1]
         random_seed = config["training"]["random_seed"]
-
-        # Define a subclass that fixes input_dim and random_seed
-        class WrappedTorchRegressor(TorchRegressor):
-            def __init__(self, hidden_dim, learning_rate, num_epochs, batch_size):
-                super().__init__(
-                    input_dim=input_dim,
-                    hidden_dim=hidden_dim,
-                    learning_rate=learning_rate,
-                    num_epochs=num_epochs,
-                    batch_size=batch_size,
-                    random_seed=random_seed,
-                )
-
         pg = config["tuning"]["param_grid"]
         param_grid = {
             "hidden_dim": pg["hidden_dim"],
@@ -117,13 +134,18 @@ def tune():
             "batch_size": pg["batch_size"],
         }
 
+        # Create a partial instance; GridSearchCV will override hyperparameters
+        estimator = WrappedTorchRegressor(
+            input_dim=input_dim,
+            random_seed=random_seed,
+            hidden_dim=config["training"]["hidden_dim"],
+            learning_rate=config["training"]["learning_rate"],
+            num_epochs=config["training"]["num_epochs"],
+            batch_size=config["training"]["batch_size"],
+        )
+
         gs = GridSearchCV(
-            estimator=WrappedTorchRegressor(
-                hidden_dim=config["training"]["hidden_dim"],
-                learning_rate=config["training"]["learning_rate"],
-                num_epochs=config["training"]["num_epochs"],
-                batch_size=config["training"]["batch_size"],
-            ),
+            estimator=estimator,
             param_grid=param_grid,
             scoring="r2",
             cv=3,
@@ -138,7 +160,11 @@ def tune():
         print("Best CV R² (PyTorch):", gs.best_score_)
 
     # 4. Evaluate the best model on the hold-out test set
-    test_preds = best_model.predict(X_test if model_choice != "pytorch" else X_test.astype("float32"))
+    if model_choice == "pytorch":
+        test_preds = best_model.predict(X_test.astype("float32"))
+    else:
+        test_preds = best_model.predict(X_test)
+
     test_mse = mean_squared_error(y_test, test_preds)
     test_r2 = r2_score(y_test, test_preds)
     print(f"[{model_choice.upper()}] Test MSE: {test_mse:.4f}, Test R²: {test_r2:.4f}")
