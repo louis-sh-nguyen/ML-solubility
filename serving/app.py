@@ -37,10 +37,11 @@ if model_choice == "sklearn":
 elif model_choice == "xgboost":
     model_path = os.path.join(artifacts_dir, "xgb_model.joblib")
 else:
-    model_path = os.path.join(artifacts_dir, "torch_model.joblib")
+    model_path = os.path.join(artifacts_dir, "torch_model.pt")
 
 try:
-    model = joblib.load(model_path)
+    import torch  # Import torch for PyTorch model loading
+    model = torch.load(model_path)
 except FileNotFoundError:
     raise RuntimeError(f"Model not found at {model_path}. Run training first.")
 
