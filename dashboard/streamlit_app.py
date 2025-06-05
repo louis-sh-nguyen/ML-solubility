@@ -96,36 +96,81 @@ feature_names = list(num_features) + list(preprocessor.transformers_[1][1].
 df_train = pd.DataFrame(X_train, columns=feature_names)
 df_train["wa"] = y_train
 
-# 2a. Show histograms of each feature in pages of up to 12 at a time
+# 2a. Show histograms by feature type
 if st.checkbox("Show feature histograms"):
     st.subheader("Feature distributions (Train set)")
-    max_per_page = 12
-    total_feats = len(feature_names)
-    pages = (total_feats + max_per_page - 1) // max_per_page
-
-    for page in range(pages):
-        start_idx = page * max_per_page
-        end_idx = min(start_idx + max_per_page, total_feats)
-        subset_feats = feature_names[start_idx:end_idx]
-
-        n_sub = len(subset_feats)
-        n_cols = 3
-        n_rows = (n_sub + n_cols - 1) // n_cols
-
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 4 * n_rows))
-        axes = axes.flatten()
-
-        for idx, feat in enumerate(subset_feats):
-            axes[idx].hist(df_train[feat], bins=30, color="skyblue", edgecolor="black")
-            axes[idx].set_title(feat)
-
-        # Remove any unused subplots
-        for j in range(n_sub, len(axes)):
-            fig.delaxes(axes[j])
-
+    
+    # Separate numeric and categorical features
+    numeric_features = list(num_features)
+    encoded_features = [f for f in feature_names if f not in numeric_features]
+    
+    # Add feature type selector
+    feature_type = st.radio(
+        "Select feature type to display:",
+        ["Numeric Features", "One-Hot Encoded Features"]
+    )
+    
+    features_to_plot = numeric_features if feature_type == "Numeric Features" else encoded_features
+    
+    # For one-hot encoded features
+    if feature_type == "One-Hot Encoded Features":
+        search_term = st.text_input("Filter features by name:")
+        if search_term:
+            features_to_plot = [f for f in encoded_features if search_term.lower() in f.lower()]
+        
+        # Show occurrence percentages instead of histograms
+        st.subheader("One-hot encoded feature occurrence rates")
+        
+        # Calculate occurrence rates for each feature
+        occurrence_rates = {feat: df_train[feat].mean() * 100 for feat in features_to_plot}
+        
+        # Sort by occurrence rate
+        sorted_features = sorted(occurrence_rates.items(), key=lambda x: x[1], reverse=True)
+        
+        # Take top N features to avoid overcrowding
+        top_n = st.slider("Number of top features to show:", 10, 100, 30)
+        top_features = sorted_features[:top_n]
+        
+        # Create bar chart
+        fig, ax = plt.subplots(figsize=(10, max(5, top_n//4)))
+        feature_names = [f[0] for f in top_features]
+        occurrence_values = [f[1] for f in top_features]
+        
+        ax.barh(feature_names, occurrence_values, color="teal")
+        ax.set_xlabel("Occurrence Rate (%)")
+        ax.set_title(f"Top {top_n} One-Hot Encoded Features by Occurrence Rate")
+        
+        plt.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
 
+        # Offer a PCA visualization option
+        if st.checkbox("Show PCA visualization of one-hot encoded features"):
+            from sklearn.decomposition import PCA
+            
+            # Create PCA model
+            n_components = st.slider("Number of PCA components:", 2, 10, 2)
+            pca = PCA(n_components=n_components)
+            
+            # Apply PCA to one-hot encoded features only
+            onehot_data = df_train[encoded_features]
+            pca_result = pca.fit_transform(onehot_data)
+            
+            # Show explained variance
+            explained_variance = pca.explained_variance_ratio_
+            st.write(f"Explained variance by components: {[f'{var:.2%}' for var in explained_variance]}")
+            
+            # Plot first two components
+            fig, ax = plt.subplots(figsize=(10, 8))
+            sc = ax.scatter(pca_result[:, 0], pca_result[:, 1], 
+                        c=df_train["wa"], cmap="viridis", alpha=0.6)
+            plt.colorbar(sc, label="Target (wa)")
+            ax.set_xlabel(f"PC1 ({explained_variance[0]:.2%} variance)")
+            ax.set_ylabel(f"PC2 ({explained_variance[1]:.2%} variance)")
+            ax.set_title("PCA of One-Hot Encoded Features")
+            st.pyplot(fig)
+            plt.close(fig)
+        
 # 2b. Scatter plot: predicted vs. true for test set (if model exists)
 st.subheader("Model Predictions vs. True (if a trained model is found)")
 artifacts_dir = Path(__file__).parent.parent / "artifacts"
