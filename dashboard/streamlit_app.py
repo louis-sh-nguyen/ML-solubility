@@ -1,5 +1,3 @@
-# dashboard/streamlit_app.py
-
 import os
 from pathlib import Path
 import numpy as np
@@ -21,7 +19,7 @@ st.set_page_config(
 st.title("Solubility: EDA & Model Monitoring Dashboard")
 
 # Create tabs for better organization
-tab1, tab2 = st.tabs(["Exploratory Data Analysis (EDA)", "Model Monitoring"])
+tab1, tab2, tab3 = st.tabs(["Exploratory Data Analysis (EDA)", "Model Monitoring", "Prediction"])
 
 # ─── 1. Load processed data ───────────────────────────────────────────────────
 
@@ -420,6 +418,209 @@ with tab2:
         st.pyplot(fig3)
     else:
         st.info(f"No `metrics_history.csv` found at `{metrics_file}`. You can generate one by logging metrics to CSV in train.py.")
+
+# ─── 4. Prediction Tab ───────────────────────────────────────────────────────
+
+with tab3:
+    st.header("Solubility Prediction")
+    st.write("Enter feature values to predict solubility (wa)")
+    
+    # Get model for prediction
+    pred_model_choice = st.selectbox(
+        "Choose model for prediction:",
+        options=["sklearn", "xgboost", "pytorch"],
+        index=["sklearn", "xgboost", "pytorch"].index(os.environ.get("MODEL_CHOICE", "sklearn")),
+        key="pred_model_choice"
+    )
+    
+    pred_model_path = artifacts_dir / model_path_map.get(pred_model_choice, "rf_regressor.joblib")
+    
+    if pred_model_path.exists():
+        pred_model = joblib.load(pred_model_path)
+        
+        # Create columns for better layout
+        col1, col2 = st.columns(2)
+        
+        # Form for user input
+        with st.form("prediction_form"):
+            st.subheader("Enter feature values")
+            
+            # Create input fields for numeric features
+            numeric_inputs = {}
+            for feature in numeric_features:
+                # Get min, max, and mean values for each feature
+                min_val = df_train[feature].min()
+                max_val = df_train[feature].max()
+                mean_val = df_train[feature].mean()
+                
+                # Create slider with reasonable defaults
+                numeric_inputs[feature] = st.slider(
+                    f"{feature}:", 
+                    min_value=float(min_val),
+                    max_value=float(max_val),
+                    value=float(mean_val),
+                    format="%.2f"
+                )
+            
+            # Create categorical feature inputs
+            # Extract original categorical features (before one-hot encoding)
+            cat_inputs = {}
+            for cat in cat_features:
+                # Extract unique values for this categorical feature
+                cat_values = []
+                for encoded_feat in encoded_features:
+                    if encoded_feat.startswith(f"{cat}_"):
+                        # Extract the category value from the encoded feature name
+                        cat_value = encoded_feat[len(cat)+1:]
+                        cat_values.append(cat_value)
+                
+                # Create selectbox for this categorical feature
+                if cat_values:  # Only if we have values
+                    cat_inputs[cat] = st.selectbox(
+                        f"Select {cat}:",
+                        options=cat_values
+                    )
+            
+            submitted = st.form_submit_button("Predict Solubility")
+        
+        if submitted:
+            # Convert user inputs to feature vector
+            input_vector = np.zeros((1, len(feature_names)))
+            input_df = pd.DataFrame(columns=feature_names)
+            
+            # Fill numeric features
+            for i, feature in enumerate(numeric_features):
+                idx = feature_names.index(feature)
+                input_vector[0, idx] = numeric_inputs[feature]
+                input_df.loc[0, feature] = numeric_inputs[feature]
+            
+            # Fill categorical features (one-hot encoding)
+            for cat, value in cat_inputs.items():
+                encoded_feature = f"{cat}_{value}"
+                if encoded_feature in feature_names:
+                    idx = feature_names.index(encoded_feature)
+                    input_vector[0, idx] = 1
+                    input_df.loc[0, encoded_feature] = 1
+            
+            # Make prediction
+            try:
+                if pred_model_choice == "pytorch":
+                    prediction = pred_model.predict(input_vector.astype("float32"))[0]
+                else:
+                    prediction = pred_model.predict(input_vector)[0]
+                
+                # Calculate prediction interval
+                # For RandomForest and Boosting models that support it
+                prediction_interval = None
+                confidence = 0.95  # 95% confidence interval
+                
+                if hasattr(pred_model, "estimators_"):  # RandomForest
+                    # Get predictions from all trees
+                    tree_preds = []
+                    for tree in pred_model.estimators_:
+                        tree_preds.append(tree.predict(input_vector)[0])
+                    
+                    # Calculate prediction interval
+                    lower_bound = np.percentile(tree_preds, (1 - confidence) * 100 / 2)
+                    upper_bound = np.percentile(tree_preds, 100 - (1 - confidence) * 100 / 2)
+                    prediction_interval = (lower_bound, upper_bound)
+                    std_dev = np.std(tree_preds)
+                elif pred_model_choice == "xgboost" and hasattr(pred_model, "predict"):
+                    # For XGBoost, we can use standard deviation from training set errors
+                    # This is a simplification - more accurate methods exist
+                    mse = mean_squared_error(y_test, y_test_pred)
+                    std_dev = np.sqrt(mse)
+                    lower_bound = prediction - 1.96 * std_dev
+                    upper_bound = prediction + 1.96 * std_dev
+                    prediction_interval = (lower_bound, upper_bound)
+                
+                # Display results
+                st.subheader("Prediction Results")
+                st.success(f"Predicted Solubility (wa): **{prediction:.4f}**")
+                
+                if prediction_interval:
+                    st.write(f"**{confidence*100:.0f}% Confidence Interval**: [{prediction_interval[0]:.4f}, {prediction_interval[1]:.4f}]")
+                    st.write(f"**Standard Deviation**: {std_dev:.4f}")
+                
+                # Visualization
+                st.subheader("Prediction Visualization")
+                
+                # Create a visualization showing the prediction range
+                fig, ax = plt.subplots(figsize=(10, 4))
+                
+                if prediction_interval:
+                    # Plot distribution curve
+                    x = np.linspace(prediction_interval[0] - std_dev, 
+                                    prediction_interval[1] + std_dev, 1000)
+                    y = np.exp(-0.5*((x-prediction)/std_dev)**2) / (std_dev * np.sqrt(2*np.pi))
+                    
+                    ax.plot(x, y, 'b-')
+                    ax.fill_between(x, y, 0, alpha=0.2, color='blue')
+                    
+                    # Add vertical lines
+                    ax.axvline(x=prediction, color='red', linestyle='-', label='Prediction')
+                    ax.axvline(x=prediction_interval[0], color='green', linestyle='--', label='95% CI')
+                    ax.axvline(x=prediction_interval[1], color='green', linestyle='--')
+                    
+                    # Set labels
+                    ax.set_xlabel('Solubility (wa)')
+                    ax.set_ylabel('Density')
+                    ax.set_title('Prediction with Confidence Interval')
+                    ax.legend()
+                    
+                    # Remove y-axis for cleaner look
+                    ax.set_yticks([])
+                    
+                    st.pyplot(fig)
+                    plt.close(fig)
+                
+                # Show where prediction falls in the training data distribution
+                fig2, ax2 = plt.subplots(figsize=(10, 4))
+                
+                # Histogram of training data
+                ax2.hist(y_train, bins=30, alpha=0.5, label='Training Data')
+                
+                # Add line for prediction
+                ax2.axvline(x=prediction, color='red', linestyle='-', label='Prediction')
+                
+                if prediction_interval:
+                    # Add confidence interval
+                    ax2.axvspan(prediction_interval[0], prediction_interval[1], 
+                               alpha=0.2, color='red', label='95% CI')
+                
+                ax2.set_xlabel('Solubility (wa)')
+                ax2.set_ylabel('Frequency')
+                ax2.set_title('Prediction vs Training Data Distribution')
+                ax2.legend()
+                
+                st.pyplot(fig2)
+                plt.close(fig2)
+                
+            except Exception as e:
+                st.error(f"Error making prediction: {str(e)}")
+                st.write("Please check your input values and try again.")
+    else:
+        st.warning(f"No model file found at `{pred_model_path}`. Train a model first.")
+    
+    # Add some context about the prediction
+    with st.expander("About the prediction"):
+        st.write("""
+        ### Understanding the Prediction
+        
+        The solubility prediction is based on the model trained on historical data. 
+        The confidence interval represents the range where the true value is likely to fall with 95% probability.
+        
+        ### Feature Importance
+        
+        Different features have varying impacts on the prediction. The most important features 
+        for this prediction model are typically molecular properties related to polarity, 
+        hydrogen bonding capabilities, and molecular size.
+        
+        ### Limitations
+        
+        The model has been trained on specific types of compounds and may have lower 
+        accuracy for compounds that are significantly different from those in the training set.
+        """)
 
 st.markdown("---")
 st.write("© 2025 Louis Nguyen. All rights reserved.")
